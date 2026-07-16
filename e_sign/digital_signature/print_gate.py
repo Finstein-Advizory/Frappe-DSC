@@ -25,6 +25,16 @@ def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, **kwargs
 	"""
 	from frappe.utils.print_format import download_pdf as _original_download_pdf
 
+	# The client print UI may send params the original download_pdf does not accept (e.g. the
+	# print `settings` blob). Because this override declares **kwargs, Frappe hands us EVERY form
+	# param (it can't filter against a **kwargs signature), so forwarding kwargs as-is would raise
+	# "download_pdf() got an unexpected keyword argument 'settings'". Keep only the params the
+	# original actually accepts (language, letterhead, pdf_generator, …) and drop the rest.
+	import inspect
+
+	_accepted = set(inspect.signature(_original_download_pdf).parameters)
+	safe_kwargs = {k: v for k, v in kwargs.items() if k in _accepted}
+
 	blocking_rule = frappe.db.get_value(
 		"DSC Rule",
 		filters={
@@ -39,7 +49,7 @@ def download_pdf(doctype, name, format=None, doc=None, no_letterhead=0, **kwargs
 	if not blocking_rule:
 		return _original_download_pdf(
 			doctype, name, format=format, doc=doc,
-			no_letterhead=no_letterhead, **kwargs,
+			no_letterhead=no_letterhead, **safe_kwargs,
 		)
 
 	# A DSC gate applies — from here we diverge from Frappe's native handler,
