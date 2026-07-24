@@ -73,9 +73,7 @@ async function pairThisComputer(frm) {
 			throw new AgentUnreachable(port);
 		}
 
-		// 2. Mint a one-time pairing code on the server. site_url is derived
-		//    server-side from the site's host_name, so the agent calls back a
-		//    URL that actually resolves.
+		// 2. Mint a one-time pairing code on the server.
 		const codeResp = await callServer("e_sign.api.agent.generate_pairing_code");
 		if (!codeResp || !codeResp.pairing_code) {
 			throw new Error(__("The server did not return a pairing code."));
@@ -83,13 +81,18 @@ async function pairThisComputer(frm) {
 
 		// 3. Hand the code straight to the local agent — it validates the code
 		//    against the site and stores the long-lived site token itself.
+		//    site_url is the browser's own origin, i.e. the exact host:port the
+		//    user is currently on. This avoids the server-side get_url() falling
+		//    back to the bench's configured webserver_port (which can differ from
+		//    the port actually being used), so the agent always calls back a URL
+		//    that resolves — whatever bench port is in use.
 		const resp = await fetch(`https://${AGENT_HOST}:${port}/v1/pair`, {
 			method: "POST",
 			mode: "cors",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				pairing_code: codeResp.pairing_code,
-				site_url: codeResp.site_url,
+				site_url: window.location.origin,
 			}),
 		});
 		const body = await resp.json().catch(() => ({}));
@@ -200,7 +203,10 @@ function generateAndShowCode(frm) {
 function showPairingDialog(payload) {
 	const code = payload.pairing_code;
 	const ttl = payload.expires_in_seconds || 600;
-	const siteUrl = payload.site_url || frappe.boot.sitename || window.location.origin;
+	// Use the browser's own origin (the exact host:port currently in use) so the
+	// agent calls back a URL that resolves regardless of the bench's configured
+	// webserver_port.
+	const siteUrl = window.location.origin;
 
 	const curlCmd =
 		`curl -k -X POST https://127.0.0.1:4645/v1/pair \\\n` +
