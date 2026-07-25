@@ -21,6 +21,7 @@ type Handlers struct {
 	pkcs11  *PKCS11Handler
 	ks      *Keystore
 	agentFP string
+	pins    *PINCache
 }
 
 // --- GET /v1/status ---
@@ -310,19 +311,36 @@ func (h *Handlers) HandleSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sign the hash. The PIN must be provided in the request — most PKCS#11
-	// modules (HyperPKI included) crash in their C code when C_Login is called
-	// with an empty PIN, so we require a non-empty value here.
-	if req.PIN == "" {
-		writeErrorMsg(w, ErrInternalError, "pin is required", http.StatusBadRequest)
-		return
+	// Resolve the PIN. Per-session caching (see PINCache): if the request omits
+	// the PIN, reuse one cached earlier this session for the same certificate;
+	// if nothing is cached, tell the caller to prompt (PIN_REQUIRED) and retry.
+	// Either way the PIN handed to C_Login is non-empty — most PKCS#11 modules
+	// (HyperPKI included) crash when C_Login is called with an empty PIN.
+	pin := req.PIN
+	if pin == "" {
+		cached, ok := h.pins.Get(req.ExpectedFingerprint)
+		if !ok {
+			writeError(w, ErrPINRequired, http.StatusUnauthorized)
+			return
+		}
+		pin = cached
 	}
-	sigBytes, certDER, err := h.pkcs11.SignHash(ctx, slot, req.ExpectedFingerprint, hashBytes, req.PIN)
+
+	sigBytes, certDER, err := h.pkcs11.SignHash(ctx, slot, req.ExpectedFingerprint, hashBytes, pin)
 	if err != nil {
 		code, status := mapPKCS11Error(err)
+		// A wrong or locked PIN must not linger in the cache — otherwise every
+		// retry this session reuses it and can lock the token.
+		if code == ErrPINIncorrect || code == ErrPINLocked {
+			h.pins.Forget(req.ExpectedFingerprint)
+		}
 		writeErrorMsg(w, code, err.Error(), status)
 		return
 	}
+
+	// Signature succeeded — remember the PIN for the rest of this session so the
+	// signer isn't prompted again until the bridge restarts (next login/reboot).
+	h.pins.Set(req.ExpectedFingerprint, pin)
 
 	// Fetch certificate chain via AIA extension
 	chainDER, _ := FetchCertChain(certDER)

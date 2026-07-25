@@ -93,8 +93,20 @@
 	//                         SIGNING FLOW
 	// ============================================================
 
-	function startSigningFlow(frm, info) {
+	async function startSigningFlow(frm, info) {
 		const port = info.agent_port || DEFAULT_AGENT_PORT;
+
+		// Gate 1: is the DSC Bridge installed & running on THIS computer? The
+		// browser can only reach a bridge on its own machine (127.0.0.1), so if
+		// the ping fails the user simply hasn't installed it here yet. Show a
+		// friendly one-time download prompt instead of a cryptic error. After
+		// they install it, it auto-starts and clicking Sign again just works.
+		const agentStatus = await pingAgent(port);
+		if (!agentStatus) {
+			showBridgeDownloadDialog(port);
+			return;
+		}
+
 		const dialog = buildProgressDialog(frm);
 		const ctx = { signing_request: null };
 
@@ -115,6 +127,99 @@
 				});
 			}
 		});
+	}
+
+	// ----- One-time bridge install prompt -----
+
+	// Installer files are shipped with the app and served statically.
+	const DOWNLOAD_BASE = "/assets/e_sign/downloads/";
+	const BRIDGE_INSTALLERS = {
+		windows: { file: "dsc-bridge-1.0.0-windows.zip", label: __("Download for Windows") },
+		linux: { file: "dsc-bridge_1.0.0_amd64.deb", label: __("Download for Linux (Ubuntu/Debian)") },
+		mac: { file: "dsc-bridge-1.0.0.pkg", label: __("Download for macOS") },
+	};
+
+	// Best-effort OS detection from the browser.
+	function detectOS() {
+		const raw =
+			(navigator.userAgentData && navigator.userAgentData.platform) ||
+			navigator.platform ||
+			navigator.userAgent ||
+			"";
+		const s = raw.toLowerCase();
+		if (s.indexOf("win") !== -1) return "windows";
+		if (s.indexOf("mac") !== -1) return "mac";
+		if (s.indexOf("linux") !== -1 || s.indexOf("x11") !== -1) return "linux";
+		return "unknown";
+	}
+
+	function installerLink(os) {
+		const item = BRIDGE_INSTALLERS[os];
+		if (!item) return "";
+		return `<a class="btn btn-primary btn-sm" style="margin:4px 6px 4px 0"
+			href="${DOWNLOAD_BASE}${item.file}" download>${frappe.utils.escape_html(item.label)}</a>`;
+	}
+
+	// Shows a friendly one-time install prompt when no bridge is running on this
+	// machine, with the correct installer for the detected OS up front and the
+	// others available too. After installing, the user clicks "I've installed it"
+	// to re-check without reloading.
+	function showBridgeDownloadDialog(port) {
+		const os = detectOS();
+		const primary = os !== "unknown" ? installerLink(os) : "";
+		const others = ["windows", "linux", "mac"]
+			.filter((o) => o !== os)
+			.map(installerLink)
+			.join("");
+
+		const dlg = new frappe.ui.Dialog({
+			title: __("Install the DSC Bridge (one time)"),
+			size: "large",
+			fields: [
+				{
+					fieldtype: "HTML",
+					options: `
+						<p>${__(
+							"To sign with your DSC token, this computer needs the <b>DSC Bridge</b> — a small helper that lets the browser talk to your USB token. You only install it <b>once</b>; after that it starts automatically and you just plug in the token and sign."
+						)}</p>
+						<div style="margin:14px 0">
+							${primary || `<div class="text-muted">${__("Choose your operating system:")}</div>`}
+							<div style="margin-top:6px">${others}</div>
+						</div>
+						<ol class="text-muted" style="padding-left:18px">
+							<li>${__("Download and run the installer (double-click).")}</li>
+							<li>${__("Plug in your DSC USB token.")}</li>
+							<li>${__("Come back here and click <b>Sign with DSC</b> again.")}</li>
+						</ol>
+						<p class="text-muted"><small>${__(
+							"On Linux the .deb installs everything automatically. On Windows the token driver installs itself; on Linux install your token's driver once if prompted."
+						)}</small></p>
+					`,
+				},
+			],
+			primary_action_label: __("I've installed it — check again"),
+			async primary_action() {
+				const status = await pingAgent(port);
+				if (status) {
+					dlg.hide();
+					frappe.show_alert(
+						{ message: __("DSC Bridge detected ✓ — click 'Sign with DSC' now."), indicator: "green" },
+						6
+					);
+				} else {
+					frappe.show_alert(
+						{
+							message: __(
+								"Still not detected. Make sure the installer finished and the DSC Bridge is running, then try again."
+							),
+							indicator: "orange",
+						},
+						6
+					);
+				}
+			},
+		});
+		dlg.show();
 	}
 
 	async function runSigningPipeline(frm, info, port, dialog, ctx) {
@@ -174,23 +279,39 @@
 		// if anything below this point throws.
 		if (ctx) ctx.signing_request = initiated.signing_request;
 
-		// 3) Prompt the user for their token PIN. The browser captures it and
-		// sends to the agent — we cannot rely on the PKCS#11 module to pop a
-		// dialog (HyperPKI's module crashes when called with empty PIN).
-		const pin = await promptForPIN(dialog);
-		if (!pin) {
-			throw new Error(__("PIN entry cancelled"));
-		}
+		// 3+4) Sign on the token. The bridge caches the PIN for the session
+		// ("cache per session"), so we try first WITHOUT a PIN: if the bridge
+		// already has one cached it signs immediately and the signer is never
+		// prompted. Only when the bridge reports PIN_REQUIRED do we prompt for
+		// the PIN and retry. The browser must capture the PIN — we cannot rely on
+		// the PKCS#11 module to pop its own dialog (HyperPKI's module crashes
+		// when C_Login is called with an empty PIN).
+		const signingState = () =>
+			dialog.set_state(
+				"awaiting_pin",
+				__("Signing on token…") +
+					`<br/><small class='text-muted'>${__(
+						"Do not unplug the token while signing."
+					)}</small>`
+			);
 
-		// 4) Hand the hash + PIN to the local agent to sign
-		dialog.set_state(
-			"awaiting_pin",
-			__("Signing on token…") +
-				`<br/><small class='text-muted'>${__(
-					"Do not unplug the token while signing."
-				)}</small>`
-		);
-		const signed = await callAgent(port, initiated, pin);
+		signingState();
+		let signed;
+		try {
+			signed = await callAgent(port, initiated, "");
+		} catch (err) {
+			if (!err || err.code !== "PIN_REQUIRED") {
+				throw err;
+			}
+			// First sign of the session (nothing cached) — prompt once, then the
+			// bridge caches it for subsequent signs.
+			const pin = await promptForPIN(dialog);
+			if (!pin) {
+				throw new Error(__("PIN entry cancelled"));
+			}
+			signingState();
+			signed = await callAgent(port, initiated, pin);
+		}
 
 		// 4) Hand the signature back to the server for injection + verification
 		dialog.set_state("finalising", __("Injecting signature and verifying PDF…"));
@@ -254,7 +375,12 @@
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({
 				pairing_code: codeResp.pairing_code,
-				site_url: codeResp.site_url || window.location.origin,
+				// Use the browser's own origin (the exact host:port currently in
+				// use) so the agent calls back a URL that resolves regardless of
+				// the bench's configured webserver_port. Do NOT fall back to the
+				// server-computed codeResp.site_url — that comes from get_url()
+				// and can carry the wrong port.
+				site_url: window.location.origin,
 			}),
 		});
 		if (!resp.ok) {
@@ -401,9 +527,13 @@
 
 		const body = await resp.json();
 		if (!resp.ok) {
-			throw new Error(
+			const err = new Error(
 				`${body.error || "AGENT_ERROR"}: ${body.message || resp.statusText}`
 			);
+			// Surface the machine-readable code so callers can branch on it
+			// (e.g. PIN_REQUIRED → prompt for the PIN and retry).
+			err.code = body.error || "AGENT_ERROR";
+			throw err;
 		}
 		return body;
 	}

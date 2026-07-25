@@ -1,0 +1,35 @@
+#!/bin/sh
+# Debian postinst — runs as root after files are unpacked.
+#
+# Per-user certs: each user's bridge generates its OWN TLS cert in its own data
+# dir, so there is nothing meaningful to trust system-wide here. Browser trust
+# is done per-user by the bridge itself on first startup (EnsureUserTrust),
+# which the autostart entry below triggers on login. So this script only:
+#   1. installs a system-wide autostart entry (all users),
+#   2. best-effort starts the bridge now for the installing desktop user.
+set -e
+
+DESKTOP=/etc/xdg/autostart/dsc-bridge.desktop
+
+mkdir -p /etc/xdg/autostart
+cat > "$DESKTOP" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=DSC Bridge
+Comment=Digital Signature Certificate signing agent
+Exec=env DSC_BRIDGE_AUTO_CONFIRM_PAIRING=1 /usr/bin/dsc-bridge
+Icon=application-certificate
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+chmod 0644 "$DESKTOP"
+
+# Best-effort: start immediately for the user who ran `sudo apt install` so they
+# don't have to log out/in. If it fails (no GUI session, etc.), the autostart
+# entry above brings it up on their next login.
+if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+    su - "${SUDO_USER}" -c 'setsid /usr/bin/dsc-bridge >/dev/null 2>&1 < /dev/null &' >/dev/null 2>&1 || true
+fi
+
+echo "dsc-bridge installed. It will run on login; sign with 'Sign with DSC'."
+exit 0

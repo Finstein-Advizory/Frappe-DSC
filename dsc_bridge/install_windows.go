@@ -172,3 +172,8 @@ func exeFullPath() (string, error) {
 	}
 	return filepath.Clean(exe), nil
 }
+
+// EnsureUserTrust is a no-op on Windows: the cert is added to the machine
+// Trusted Root store at MSI time, which every user and browser honours. Only
+// Linux needs per-user, per-startup NSS trust.
+func EnsureUserTrust() {}

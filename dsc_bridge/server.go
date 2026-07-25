@@ -13,6 +13,7 @@ func StartServer(cfg *Config, tlsCert tls.Certificate, agentFP string, pkcs11Han
 		pkcs11:  pkcs11Handler,
 		ks:      ks,
 		agentFP: agentFP,
+		pins:    NewPINCache(),
 	}
 
 	mux := http.NewServeMux()

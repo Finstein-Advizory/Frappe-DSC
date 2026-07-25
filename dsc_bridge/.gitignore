@@ -1,0 +1,11 @@
+# Build staging directories and packaged artifacts (intermediate outputs).
+# The distributable installers live in e_sign/public/downloads/ and ARE tracked.
+build/deb-stage/
+build/linux-tarball/
+build/windows-zip/
+build/macos-pkg-stage/
+build/macos-pkg-scripts/
+build/*.deb
+build/*.tar.gz
+build/*.zip
+build/*.msi

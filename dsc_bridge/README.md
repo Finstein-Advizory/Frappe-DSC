@@ -77,3 +77,65 @@ MSI installer on `windows-latest`:
 
 Trigger manually via **Actions → dsc-bridge MSI → Run workflow**, or push
 changes under `dsc_bridge/`.
+
+## Linux
+
+The bridge runs on Linux as a system-tray GUI agent (like on Windows/macOS),
+started automatically on login via an XDG autostart entry — not a systemd
+service, because a tray + the pairing dialog need the graphical session.
+
+### Build the packages
+
+```bash
+./build.sh linux            # native binary  -> build/dsc-bridge
+./build.sh linux-package    # tarball        -> build/dsc-bridge-<ver>-linux-amd64.tar.gz
+./build.sh deb              # Debian package -> build/dsc-bridge_<ver>_amd64.deb  (needs dpkg-deb)
+```
+
+### Install
+
+```bash
+# Tarball (any distro, no root needed for your own browsers)
+tar -xzf dsc-bridge-<ver>-linux-amd64.tar.gz && ./dsc-bridge/install.sh
+
+# Debian/Ubuntu (system-wide)
+sudo apt install ./dsc-bridge_<ver>_amd64.deb
+```
+
+Runtime dependencies (declared by the `.deb`, install manually for the tarball):
+
+```bash
+sudo apt install libnss3-tools zenity libsecret-1-0 opensc   # Debian/Ubuntu
+sudo dnf install nss-tools zenity libsecret opensc           # Fedora/RHEL
+```
+
+`libnss3-tools` provides `certutil` — **without it, browser trust is not
+automated** and the signer must accept a one-time warning at
+`https://127.0.0.1:4645`.
+
+### What the installer automates
+
+- **Certificate trust** — the bridge adds its own TLS cert to the current
+  user's browser stores (`certutil`): Chrome/Chromium (`~/.pki/nssdb`) and every
+  Firefox profile. This is per-user and self-heals on each startup
+  (`EnsureUserTrust`), so a root `.deb` install still ends up trusted once the
+  user logs in. For system-installed Firefox the `.deb` also drops an enterprise
+  policy (`ImportEnterpriseRoots`).
+- **Autostart** — an XDG `.desktop` under `~/.config/autostart` (tarball) or
+  `/etc/xdg/autostart` (deb). Its `Exec` sets `DSC_BRIDGE_AUTO_CONFIRM_PAIRING=1`
+  so first-time pairing needs no click; remove that env prefix for
+  consent-on-pair.
+- **PIN caching per session** — the first signature of a login session prompts
+  for the token PIN; it is then held in memory (never on disk) and reused until
+  the bridge restarts (logout/reboot).
+
+Net signer experience: **open the document → Sign with DSC → enter PIN once per
+session → signed.** See `linux-package/README-linux.txt` for the full user guide
+and the Snap-Firefox caveat.
+
+### Uninstall
+
+```bash
+./dsc-bridge/uninstall.sh    # tarball  (add --purge to delete tokens/cert)
+sudo apt remove dsc-bridge   # deb
+```
