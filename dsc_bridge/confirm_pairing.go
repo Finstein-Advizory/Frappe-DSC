@@ -21,13 +21,14 @@ const autoConfirmEnv = "DSC_BRIDGE_AUTO_CONFIRM_PAIRING"
 // unexpected origin (e.g. an attacker-controlled Frappe clone).
 //
 // Resolution order:
-//  1. If autoConfirmEnv is truthy, approve (headless/CI/dev escape hatch).
+//  1. If configAutoConfirm (from dsc-bridge.json) or autoConfirmEnv is truthy,
+//     approve — single-user desktops that opted into zero-click pairing.
 //  2. Otherwise show the platform-native dialog and honor the user's choice.
 //  3. If no dialog backend is available, DENY — secure by default. The escape
 //     hatch above exists precisely so headless setups can opt back in.
-func confirmPairing(siteURL string) bool {
-	if isTruthy(os.Getenv(autoConfirmEnv)) {
-		log.Printf("pairing: %s set — auto-approving pairing with %s", autoConfirmEnv, siteURL)
+func confirmPairing(siteURL string, configAutoConfirm bool) bool {
+	if configAutoConfirm || isTruthy(os.Getenv(autoConfirmEnv)) {
+		log.Printf("pairing: auto-confirm enabled — approving pairing with %s", siteURL)
 		return true
 	}
 

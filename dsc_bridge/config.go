@@ -19,6 +19,12 @@ type Config struct {
 	Host          string   `json:"host"`
 	Port          int      `json:"port"`
 	PKCS11Libs    []string `json:"pkcs11_libs"`
+	// AutoConfirmPairing, when true, approves pairing requests without the
+	// interactive "Allow this site?" dialog. Set via "auto_confirm_pairing" in
+	// dsc-bridge.json (or the DSC_BRIDGE_AUTO_CONFIRM_PAIRING env var). Intended
+	// for single-user desktops where the user controls the machine and wants a
+	// zero-click first sign.
+	AutoConfirmPairing bool     `json:"auto_confirm_pairing"`
 	DataDir       string   `json:"-"`
 	TLSCertPath   string   `json:"-"`
 	TLSKeyPath    string   `json:"-"`
@@ -165,9 +171,10 @@ func LoadConfig() (*Config, error) {
 
 	// Merge file config over defaults
 	var fileCfg struct {
-		Host       string   `json:"host"`
-		Port       int      `json:"port"`
-		PKCS11Libs []string `json:"pkcs11_libs"`
+		Host               string   `json:"host"`
+		Port               int      `json:"port"`
+		PKCS11Libs         []string `json:"pkcs11_libs"`
+		AutoConfirmPairing bool     `json:"auto_confirm_pairing"`
 	}
 	if err := json.Unmarshal(data, &fileCfg); err != nil {
 		return nil, err
@@ -179,6 +186,7 @@ func LoadConfig() (*Config, error) {
 	if fileCfg.Port != 0 {
 		cfg.Port = fileCfg.Port
 	}
+	cfg.AutoConfirmPairing = fileCfg.AutoConfirmPairing
 	if len(fileCfg.PKCS11Libs) > 0 {
 		// Prepend user-supplied libs to defaults so user paths are tried first
 		// but the built-in vendor catalog is still attempted. Avoids the trap

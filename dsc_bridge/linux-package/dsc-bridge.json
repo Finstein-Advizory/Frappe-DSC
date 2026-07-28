@@ -1,5 +1,6 @@
 {
   "host": "127.0.0.1",
   "port": 4645,
+  "auto_confirm_pairing": true,
   "pkcs11_libs": []
 }

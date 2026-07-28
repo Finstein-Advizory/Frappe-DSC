@@ -228,6 +228,28 @@ build_windows_package() {
     echo "Install: unzip, then double-click install.bat"
 }
 
+# 32-bit Windows package — same as build_windows_package but with the x86 .exe.
+# Needed for tokens whose PKCS#11 driver is 32-bit only (e.g. Hypersecu HYP2003):
+# a 64-bit process cannot load a 32-bit DLL, so those users need this build.
+build_windows_package_x86() {
+    build_windows_x86
+    if ! command -v zip &> /dev/null; then
+        echo "ERROR: zip not found. Install with: sudo apt install zip"
+        return 1
+    fi
+    STAGE="$BUILD_DIR/win-x86-zip/dsc-bridge"
+    rm -rf "$BUILD_DIR/win-x86-zip"
+    mkdir -p "$STAGE"
+    cp "$BUILD_DIR/$APP_NAME-x86.exe" "$STAGE/dsc-bridge.exe"
+    cp windows-package/dsc-bridge.json windows-package/install.bat \
+       windows-package/uninstall.bat windows-package/README-windows.txt "$STAGE/"
+    ZIP="$BUILD_DIR/${APP_NAME}-${VERSION}-windows-x86.zip"
+    rm -f "$ZIP"
+    (cd "$BUILD_DIR/win-x86-zip" && zip -r -q "$(basename "$ZIP")" dsc-bridge && mv "$(basename "$ZIP")" ..)
+    echo "Built: $ZIP"
+    echo "For tokens with a 32-bit driver (e.g. Hypersecu HYP2003)."
+}
+
 # Linux packaging — assemble the distro-agnostic tarball (binary + install.sh +
 # uninstall.sh + config + README). No root needed to install it for a user.
 build_linux_package() {
@@ -301,6 +323,7 @@ case "${1:-local}" in
     deb)                build_deb ;;
     windows)            build_windows_amd64 ;;
     windows-package)    build_windows_package ;;
+    windows-package-x86) build_windows_package_x86 ;;
     windows-x86)        build_windows_x86 ;;
     darwin-amd64)       build_darwin_amd64 ;;
     darwin-arm64)       build_darwin_arm64 ;;

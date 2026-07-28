@@ -18,10 +18,11 @@ import (
 
 // Handlers holds dependencies for HTTP handlers.
 type Handlers struct {
-	pkcs11  *PKCS11Handler
-	ks      *Keystore
-	agentFP string
-	pins    *PINCache
+	pkcs11             *PKCS11Handler
+	ks                 *Keystore
+	agentFP            string
+	pins               *PINCache
+	autoConfirmPairing bool
 }
 
 // --- GET /v1/status ---
@@ -121,7 +122,7 @@ func (h *Handlers) HandlePair(w http.ResponseWriter, r *http.Request) {
 	// must be, to bootstrap the first pairing), so this dialog is what stops a
 	// malicious page from silently pairing the agent to an attacker-controlled
 	// site in the background. The user sees the exact site_url and must consent.
-	if !confirmPairing(req.SiteURL) {
+	if !confirmPairing(req.SiteURL, h.autoConfirmPairing) {
 		writeError(w, ErrUnauthorized, http.StatusForbidden)
 		return
 	}
