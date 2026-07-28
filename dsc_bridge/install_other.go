@@ -1,19 +1,21 @@
-//go:build !windows && !darwin
+//go:build !windows && !darwin && !linux
 
 package main
 
 import "fmt"
 
-// PostInstall is a no-op on non-Windows platforms. The autostart, firewall,
-// and certificate-trust steps are Windows-specific concepts handled by the
-// MSI installer; on macOS we use a LaunchAgent .plist and on Linux a
-// systemd user service — both wired up by their respective packagers, not
-// by the bridge binary itself.
+// PostInstall is a no-op stub for platforms without a dedicated installer
+// (BSD, etc.). Windows, macOS, and Linux each have their own install_*.go with
+// real autostart / firewall / certificate-trust logic.
 func PostInstall() error {
-	return fmt.Errorf("--post-install is only meaningful on Windows")
+	return fmt.Errorf("--post-install is not implemented on this platform")
 }
 
 // PreUninstall mirrors PostInstall.
 func PreUninstall() error {
-	return fmt.Errorf("--pre-uninstall is only meaningful on Windows")
+	return fmt.Errorf("--pre-uninstall is not implemented on this platform")
 }
+
+// EnsureUserTrust is a no-op here; per-user browser trust is only automated on
+// Linux (NSS DBs). See install_linux.go.
+func EnsureUserTrust() {}

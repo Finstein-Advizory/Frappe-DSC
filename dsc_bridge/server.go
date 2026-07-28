@@ -10,9 +10,11 @@ import (
 // StartServer creates and runs the HTTPS server on 127.0.0.1:4645.
 func StartServer(cfg *Config, tlsCert tls.Certificate, agentFP string, pkcs11Handler *PKCS11Handler, ks *Keystore) error {
 	handlers := &Handlers{
-		pkcs11:  pkcs11Handler,
-		ks:      ks,
-		agentFP: agentFP,
+		pkcs11:             pkcs11Handler,
+		ks:                 ks,
+		agentFP:            agentFP,
+		pins:               NewPINCache(),
+		autoConfirmPairing: cfg.AutoConfirmPairing,
 	}
 
 	mux := http.NewServeMux()

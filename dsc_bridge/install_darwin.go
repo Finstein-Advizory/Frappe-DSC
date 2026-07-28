@@ -205,3 +205,7 @@ func exeFullPath() (string, error) {
 	}
 	return filepath.Clean(exe), nil
 }
+
+// EnsureUserTrust is a no-op on macOS: trust lives in the System Keychain,
+// installed once at .pkg time. Only Linux needs per-user, per-startup NSS trust.
+func EnsureUserTrust() {}

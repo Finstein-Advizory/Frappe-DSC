@@ -57,6 +57,11 @@ func main() {
 	}
 	log.Printf("Agent fingerprint: %s", agentFP)
 
+	// Best-effort: make sure this user's browsers trust the bridge cert. On
+	// Linux this idempotently seeds the per-user NSS DBs (Chrome/Firefox) that a
+	// root package install can't reach. No-op on Windows/macOS.
+	EnsureUserTrust()
+
 	// Load keystore (paired sites)
 	ks, err := NewKeystore(cfg.PairedSites)
 	if err != nil {

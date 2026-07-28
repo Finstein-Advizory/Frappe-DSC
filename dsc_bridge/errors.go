@@ -16,6 +16,7 @@ const (
 	ErrPINCancelled       = "PIN_CANCELLED"
 	ErrPINIncorrect       = "PIN_INCORRECT"
 	ErrPINLocked          = "PIN_LOCKED"
+	ErrPINRequired        = "PIN_REQUIRED"
 	ErrOCSPUnavailable    = "OCSP_UNAVAILABLE"
 	ErrUnsupportedAlgo    = "UNSUPPORTED_ALGORITHM"
 	ErrInternalError      = "INTERNAL_ERROR"
@@ -38,6 +39,7 @@ var errorMessages = map[string]string{
 	ErrPINCancelled:       "PIN entry was cancelled",
 	ErrPINIncorrect:       "Incorrect PIN entered",
 	ErrPINLocked:          "Token PIN is locked — contact your token administrator",
+	ErrPINRequired:        "Token PIN is required",
 	ErrOCSPUnavailable:    "OCSP responder is unreachable — signing succeeded but revocation check failed",
 	ErrUnsupportedAlgo:    "The requested signing algorithm is not supported by this token",
 	ErrInternalError:      "An unexpected error occurred in the agent",
@@ -51,6 +53,7 @@ var recoverableErrors = map[string]bool{
 	ErrCertNotFound:    true,
 	ErrPINCancelled:    true,
 	ErrPINIncorrect:    true,
+	ErrPINRequired:     true,
 	ErrOCSPUnavailable: true,
 }
 

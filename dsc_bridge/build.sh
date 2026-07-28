@@ -7,6 +7,9 @@
 #
 # Usage:
 #   ./build.sh                  # Build for current OS
+#   ./build.sh linux            # Build the native Linux binary
+#   ./build.sh linux-package    # Build the Linux .tar.gz (binary + install.sh)
+#   ./build.sh deb              # Build the Debian/Ubuntu .deb (needs dpkg-deb)
 #   ./build.sh windows          # Cross-compile for Windows x64 (needs mingw-w64)
 #   ./build.sh windows-x86      # Cross-compile for Windows x86 (needs mingw-w64-i686)
 #   ./build.sh darwin-amd64     # Build for macOS Intel (must run on a Mac)
@@ -202,11 +205,102 @@ build_darwin_universal() {
     echo "  Or document the right-click → Open workaround for unsigned binaries."
 }
 
+# Windows packaging — cross-compile the .exe and zip it with the one-click
+# install.bat (which runs --post-install: cert trust + firewall + auto-start).
+# Produces a working installer WITHOUT needing WiX/MSI or a Windows machine.
+build_windows_package() {
+    build_windows_amd64
+    if ! command -v zip &> /dev/null; then
+        echo "ERROR: zip not found. Install with: sudo apt install zip"
+        return 1
+    fi
+    STAGE="$BUILD_DIR/windows-zip/dsc-bridge"
+    rm -rf "$BUILD_DIR/windows-zip"
+    mkdir -p "$STAGE"
+    cp "$BUILD_DIR/$APP_NAME.exe" "$STAGE/dsc-bridge.exe"
+    cp windows-package/dsc-bridge.json windows-package/install.bat \
+       windows-package/uninstall.bat windows-package/start-dsc-bridge.bat \
+       windows-package/README-windows.txt "$STAGE/"
+    ZIP="$BUILD_DIR/${APP_NAME}-${VERSION}-windows.zip"
+    rm -f "$ZIP"
+    (cd "$BUILD_DIR/windows-zip" && zip -r -q "$(basename "$ZIP")" dsc-bridge && mv "$(basename "$ZIP")" ..)
+    echo "Built: $ZIP"
+    echo "Install: unzip, then double-click install.bat"
+}
+
+# 32-bit Windows package — same as build_windows_package but with the x86 .exe.
+# Needed for tokens whose PKCS#11 driver is 32-bit only (e.g. Hypersecu HYP2003):
+# a 64-bit process cannot load a 32-bit DLL, so those users need this build.
+build_windows_package_x86() {
+    build_windows_x86
+    if ! command -v zip &> /dev/null; then
+        echo "ERROR: zip not found. Install with: sudo apt install zip"
+        return 1
+    fi
+    STAGE="$BUILD_DIR/win-x86-zip/dsc-bridge"
+    rm -rf "$BUILD_DIR/win-x86-zip"
+    mkdir -p "$STAGE"
+    cp "$BUILD_DIR/$APP_NAME-x86.exe" "$STAGE/dsc-bridge.exe"
+    cp windows-package/dsc-bridge.json windows-package/install.bat \
+       windows-package/uninstall.bat windows-package/README-windows.txt "$STAGE/"
+    ZIP="$BUILD_DIR/${APP_NAME}-${VERSION}-windows-x86.zip"
+    rm -f "$ZIP"
+    (cd "$BUILD_DIR/win-x86-zip" && zip -r -q "$(basename "$ZIP")" dsc-bridge && mv "$(basename "$ZIP")" ..)
+    echo "Built: $ZIP"
+    echo "For tokens with a 32-bit driver (e.g. Hypersecu HYP2003)."
+}
+
+# Linux packaging — assemble the distro-agnostic tarball (binary + install.sh +
+# uninstall.sh + config + README). No root needed to install it for a user.
+build_linux_package() {
+    build_local
+    STAGE="$BUILD_DIR/linux-tarball/$APP_NAME"
+    rm -rf "$BUILD_DIR/linux-tarball"
+    mkdir -p "$STAGE"
+    cp "$BUILD_DIR/$APP_NAME" "$STAGE/"
+    cp linux-package/install.sh linux-package/uninstall.sh \
+       linux-package/dsc-bridge.json linux-package/README-linux.txt "$STAGE/"
+    chmod +x "$STAGE/$APP_NAME" "$STAGE/install.sh" "$STAGE/uninstall.sh"
+    TARBALL="$BUILD_DIR/${APP_NAME}-${VERSION}-linux-amd64.tar.gz"
+    tar -czf "$TARBALL" -C "$BUILD_DIR/linux-tarball" "$APP_NAME"
+    echo "Built: $TARBALL"
+    echo "Install with: tar -xzf $(basename "$TARBALL") && ./$APP_NAME/install.sh"
+}
+
+# Debian/Ubuntu package. Installs the binary to /usr/bin and a system-wide
+# autostart entry; per-user browser trust happens on first login.
+build_deb() {
+    if ! command -v dpkg-deb &> /dev/null; then
+        echo "ERROR: dpkg-deb not found. Install with: sudo apt install dpkg-dev"
+        return 1
+    fi
+    build_local
+    ARCH="amd64"
+    STAGE="$BUILD_DIR/deb-stage"
+    rm -rf "$STAGE"
+    mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin"
+    install -m 0755 "$BUILD_DIR/$APP_NAME" "$STAGE/usr/bin/$APP_NAME"
+    # Stamp the current version into control; copy maintainer scripts.
+    sed "s/^Version: .*/Version: $VERSION/" debian/control > "$STAGE/DEBIAN/control"
+    install -m 0755 debian/postinst debian/prerm "$STAGE/DEBIAN/"
+    DEB="$BUILD_DIR/${APP_NAME}_${VERSION}_${ARCH}.deb"
+    if dpkg-deb --build --root-owner-group "$STAGE" "$DEB" 2>/dev/null; then
+        :
+    else
+        # Older dpkg-deb without --root-owner-group.
+        dpkg-deb --build "$STAGE" "$DEB"
+    fi
+    echo "Built: $DEB"
+    echo "Install with: sudo apt install ./$(basename "$DEB")"
+}
+
 build_all() {
     # Build everything that this host can produce.
     HOST_OS="$(go env GOHOSTOS)"
     if [ "$HOST_OS" = "linux" ]; then
         build_local
+        build_linux_package
+        build_deb || true
         build_windows_amd64 || true
         build_windows_x86 || true
         echo
@@ -224,7 +318,12 @@ build_all() {
 
 case "${1:-local}" in
     local)              build_local ;;
+    linux)              build_local ;;
+    linux-package)      build_linux_package ;;
+    deb)                build_deb ;;
     windows)            build_windows_amd64 ;;
+    windows-package)    build_windows_package ;;
+    windows-package-x86) build_windows_package_x86 ;;
     windows-x86)        build_windows_x86 ;;
     darwin-amd64)       build_darwin_amd64 ;;
     darwin-arm64)       build_darwin_arm64 ;;
@@ -264,7 +363,7 @@ case "${1:-local}" in
         ;;
 
     *)
-        echo "Usage: ./build.sh [local|windows|windows-x86|darwin-amd64|darwin-arm64|darwin-universal|darwin-pkg|all|msi|test|integration]"
+        echo "Usage: ./build.sh [local|linux|linux-package|deb|windows|windows-x86|darwin-amd64|darwin-arm64|darwin-universal|darwin-pkg|all|msi|test|integration]"
         exit 1
         ;;
 esac

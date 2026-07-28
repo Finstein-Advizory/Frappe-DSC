@@ -1,0 +1,13 @@
+Package: dsc-bridge
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: libnss3-tools, zenity, libsecret-1-0, opensc
+Maintainer: e-Sign <support@e-sign.local>
+Description: DSC Bridge - digital signature signing agent
+ A small local tray agent that lets the browser sign documents with a
+ hardware DSC (Digital Signature Certificate) USB token via PKCS#11.
+ The browser talks to it over https://127.0.0.1:4645. After install it
+ starts automatically on login and trusts its own certificate in the
+ user's browsers, so signing needs no manual setup.

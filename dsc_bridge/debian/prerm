@@ -1,0 +1,11 @@
+#!/bin/sh
+# Debian prerm — runs as root before the package is removed.
+# Removes the system-wide autostart entry and stops any running instance.
+# Per-user browser trust (a localhost-only cert in each user's NSS DB) is left
+# in place; it is harmless and cannot be reached for every user from here.
+set -e
+
+rm -f /etc/xdg/autostart/dsc-bridge.desktop
+pkill -x dsc-bridge 2>/dev/null || true
+
+exit 0
