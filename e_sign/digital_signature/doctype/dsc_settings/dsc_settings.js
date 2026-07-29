@@ -9,7 +9,8 @@ frappe.ui.form.on("DSC Settings", {
 	refresh(frm) {
 		const base = "/assets/e_sign/downloads/";
 		const installers = [
-			{ label: __("Windows"), file: "dsc-bridge-1.0.0-windows.zip" },
+			{ label: __("Windows (64-bit)"), file: "dsc-bridge-1.0.0-windows.zip" },
+			{ label: __("Windows (32-bit — Hypersecu/HYP2003)"), file: "dsc-bridge-1.0.0-windows-x86.zip" },
 			{ label: __("Linux (Ubuntu/Debian .deb)"), file: "dsc-bridge_1.0.0_amd64.deb" },
 			{ label: __("Linux (other, .tar.gz)"), file: "dsc-bridge-1.0.0-linux-amd64.tar.gz" },
 		];

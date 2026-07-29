@@ -541,12 +541,35 @@ def get_signing_status(doctype, docname):
 			"source_doctype": doctype,
 			"source_name": docname,
 		},
-		fields=["name", "status", "profile", "expected_signer_user", "signed_on", "signed_file"],
+		fields=["name", "status", "profile", "expected_signer_user", "signed_on", "signed_file", "modified"],
 		order_by="creation desc",
 	)
 
 	if not requests:
 		return {"status": "Not Applicable", "signing_requests": [], "can_sign": False}
+
+	# Auto-recover stale "In Progress" requests. A real signing completes in well
+	# under a minute; anything still "In Progress" past the threshold is an
+	# abandoned attempt — the browser was closed mid-sign, the network dropped, or
+	# signing failed in a way where the client-side abort never ran. Reset it to
+	# "Pending" so the signer gets the "Sign with DSC" button back and can retry,
+	# instead of the document being frozen "In Progress" forever.
+	STALE_IN_PROGRESS_SECONDS = 5 * 60
+	now = now_datetime()
+	for r in requests:
+		if (
+			r.status == "In Progress"
+			and r.get("modified")
+			and time_diff_in_seconds(now, r.modified) >= STALE_IN_PROGRESS_SECONDS
+		):
+			frappe.db.set_value(
+				"DSC Signing Request", r.name, "status", "Pending", update_modified=False
+			)
+			if doctype == "DSC Document Sign":
+				frappe.db.set_value(
+					"DSC Document Sign", docname, "status", "Pending", update_modified=False
+				)
+			r.status = "Pending"
 
 	# Determine overall status
 	statuses = [r.status for r in requests]
