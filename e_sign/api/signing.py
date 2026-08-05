@@ -277,13 +277,19 @@ def initiate(doctype, docname, cert_der_b64, signer_lat=None, signer_lng=None, s
 	import hmac as _hmac
 	import hashlib as _hashlib
 	import secrets as _secrets
+	import time as _time
 
 	from e_sign.digital_signature.doctype.dsc_settings.dsc_settings import (
 		get_or_create_hmac_secret,
 	)
 
 	hmac_secret = get_or_create_hmac_secret()
-	timestamp = int(now_datetime().timestamp())
+	# Absolute UTC epoch seconds — MUST match the bridge's time.Now().Unix(), which
+	# is timezone-independent. Do NOT use now_datetime().timestamp(): now_datetime()
+	# is a naive datetime in the SITE timezone, and .timestamp() reinterprets it in
+	# the server's OS timezone, so any site-vs-OS timezone mismatch shifts it by
+	# hours and the bridge rejects it as "timestamp outside 60s window".
+	timestamp = int(_time.time())
 	nonce = _secrets.token_hex(16)
 	mac_payload = "|".join([
 		result["session_id"],
