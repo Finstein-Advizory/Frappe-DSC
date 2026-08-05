@@ -20,6 +20,14 @@ def make(**kwargs):
 	Performs the DSC gate check, optionally augments attachments with the
 	signed PDF, then delegates to the original implementation. Kept signature
 	loose (**kwargs) so it tolerates Frappe upgrades that add parameters.
+
+	Splatting **kwargs straight into the callee is only safe because
+	``frappe.core.doctype.communication.email.make`` ends with a ``**kwargs`` of its own
+	(email.py:52) and absorbs the extras the request carries (``cmd`` and friends). Declaring
+	``**kwargs`` on a whitelisted override disables ``frappe.call``'s signature filtering, so a
+	callee with a *strict* signature would raise TypeError instead — that is exactly the bug
+	``print_gate._delegate`` exists to prevent. If core ever tightens ``make``, this needs the
+	same ``frappe.get_newargs`` treatment.
 	"""
 	from frappe.core.doctype.communication.email import make as _original_make
 
