@@ -62,6 +62,7 @@ NEVER be auto-installed — it ships from the token vendor.
 
 | Token | Driver |
 | --- | --- |
+| eMudhra (any USB DSC token) | eMudhra PKCS#11 driver (installed from the eMudhra token software / CA) |
 | HYP2003 (HyperSecu) | HyperSecu / Castle PKCS#11 driver |
 | WD ProxKey | Watchdata ProxKey driver |
 | ePass | Feitian ePass driver |
