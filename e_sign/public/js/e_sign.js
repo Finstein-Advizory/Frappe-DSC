@@ -324,11 +324,20 @@
 		try {
 			signed = await callAgent(port, initiated, "");
 		} catch (err) {
-			if (!err || err.code !== "PIN_REQUIRED") {
+			// The bridge is telling us it needs a PIN. A NEW bridge returns
+			// PIN_REQUIRED; an OLDER bridge (no per-session cache) returns
+			// INTERNAL_ERROR "pin is required". Accept both so a new website
+			// works with an un-upgraded bridge instead of failing outright.
+			const needsPin =
+				err &&
+				(err.code === "PIN_REQUIRED" ||
+					(err.code === "INTERNAL_ERROR" &&
+						/pin is required/i.test(err.message || "")));
+			if (!needsPin) {
 				throw err;
 			}
-			// First sign of the session (nothing cached) — prompt once, then the
-			// bridge caches it for subsequent signs.
+			// Prompt once. A new bridge then caches it for the session; an old
+			// bridge will simply ask again next time (its original behaviour).
 			const pin = await promptForPIN(dialog);
 			if (!pin) {
 				throw new Error(__("PIN entry cancelled"));
