@@ -51,8 +51,32 @@
 
 				renderStatusIndicator(frm, info);
 				renderActionButtons(frm, info);
+				maybeAutoPromptSign(frm, info);
 			},
 		});
+	}
+
+	// After a signer SUBMITS a document whose DSC Rule just created a pending
+	// request for them, open the signing flow automatically so they don't have
+	// to hunt for the "Sign with DSC" button — they only enter the token PIN.
+	//
+	// Fires only on the live submit transition (docstatus 0/undefined -> 1) in
+	// THIS browser session, and at most once per document. It never fires on
+	// merely opening an already-submitted, still-unsigned document — so viewing
+	// a document is never interrupted by a PIN prompt.
+	function maybeAutoPromptSign(frm, info) {
+		const prev = frm.__dsc_last_docstatus;
+		const cur = frm.doc.docstatus;
+		frm.__dsc_last_docstatus = cur;
+
+		if (frm.__dsc_auto_prompted) return;
+		if (!info.can_sign) return;
+		// Only on a fresh draft -> submitted transition observed in this session.
+		if (!(prev !== undefined && prev < 1 && cur === 1)) return;
+
+		frm.__dsc_auto_prompted = true;
+		// Let the submit's own UI (save indicator, reload) settle first.
+		setTimeout(() => startSigningFlow(frm, info), 600);
 	}
 
 	function renderStatusIndicator(frm, info) {
