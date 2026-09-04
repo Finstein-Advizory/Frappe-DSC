@@ -303,48 +303,28 @@
 		// if anything below this point throws.
 		if (ctx) ctx.signing_request = initiated.signing_request;
 
-		// 3+4) Sign on the token. The bridge caches the PIN for the session
-		// ("cache per session"), so we try first WITHOUT a PIN: if the bridge
-		// already has one cached it signs immediately and the signer is never
-		// prompted. Only when the bridge reports PIN_REQUIRED do we prompt for
-		// the PIN and retry. The browser must capture the PIN — we cannot rely on
-		// the PKCS#11 module to pop its own dialog (HyperPKI's module crashes
-		// when C_Login is called with an empty PIN).
-		const signingState = () =>
-			dialog.set_state(
-				"awaiting_pin",
-				__("Signing on token…") +
-					`<br/><small class='text-muted'>${__(
-						"Do not unplug the token while signing."
-					)}</small>`
-			);
-
-		signingState();
-		let signed;
-		try {
-			signed = await callAgent(port, initiated, "");
-		} catch (err) {
-			// The bridge is telling us it needs a PIN. A NEW bridge returns
-			// PIN_REQUIRED; an OLDER bridge (no per-session cache) returns
-			// INTERNAL_ERROR "pin is required". Accept both so a new website
-			// works with an un-upgraded bridge instead of failing outright.
-			const needsPin =
-				err &&
-				(err.code === "PIN_REQUIRED" ||
-					(err.code === "INTERNAL_ERROR" &&
-						/pin is required/i.test(err.message || "")));
-			if (!needsPin) {
-				throw err;
-			}
-			// Prompt once. A new bridge then caches it for the session; an old
-			// bridge will simply ask again next time (its original behaviour).
-			const pin = await promptForPIN(dialog);
-			if (!pin) {
-				throw new Error(__("PIN entry cancelled"));
-			}
-			signingState();
-			signed = await callAgent(port, initiated, pin);
+		// 3) Always prompt the signer for their token PIN, then sign with it.
+		// (An earlier version tried an empty PIN first to reuse a bridge-side
+		// session cache, but that made the browser depend on the bridge version
+		// and could fail to prompt on an older bridge — "pin is required".
+		// Explicit PIN entry per signature is also what signers expect for a DSC,
+		// and this works with any bridge version.) The browser must capture the
+		// PIN — the PKCS#11 module can't pop its own dialog (HyperPKI crashes on
+		// an empty PIN).
+		const pin = await promptForPIN(dialog);
+		if (!pin) {
+			throw new Error(__("PIN entry cancelled"));
 		}
+
+		// 4) Hand the hash + PIN to the local agent to sign
+		dialog.set_state(
+			"awaiting_pin",
+			__("Signing on token…") +
+				`<br/><small class='text-muted'>${__(
+					"Do not unplug the token while signing."
+				)}</small>`
+		);
+		const signed = await callAgent(port, initiated, pin);
 
 		// 4) Hand the signature back to the server for injection + verification
 		dialog.set_state("finalising", __("Injecting signature and verifying PDF…"));
