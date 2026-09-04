@@ -135,9 +135,14 @@ after_install = "e_sign.install.after_install"
 
 # Jinja
 # ------------------
-# jinja = {
-# 	"methods": "e_sign.utils.jinja_methods",
-# }
+# Exposes dsc_signature_anchor() to print formats, so authors can place a
+# dynamic DSC signature box that flows with the document:
+#   {{ dsc_signature_anchor(width=220, height=90) }}
+jinja = {
+	"methods": [
+		"e_sign.digital_signature.signature_anchor.dsc_signature_anchor",
+	],
+}
 
 # User Data Protection
 # ------------------
