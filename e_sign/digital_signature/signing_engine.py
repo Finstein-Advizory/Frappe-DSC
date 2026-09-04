@@ -24,6 +24,8 @@ from io import BytesIO
 import frappe
 from frappe.utils import now_datetime
 
+from e_sign.digital_signature.signature_anchor import locate_signature_anchor
+
 from asn1crypto import algos, cms, core, x509 as asn1_x509
 from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 from pyhanko.sign import fields as sig_fields
@@ -118,19 +120,34 @@ def prepare_pdf_for_signing(
 			py + (placement.get("height") or 80),
 		)
 	else:
-		sig_field_row = None
-		if sig_template.fields:
-			sig_field_row = sig_template.fields[0]
-
-		page_number = (sig_field_row.page_number - 1) if sig_field_row else 0
-		box = None
-		if sig_field_row and sig_field_row.x and sig_field_row.y:
+		# Dynamic placeholder takes precedence: if the print format used
+		# {{ dsc_signature_anchor(...) }}, stamp the signature wherever that
+		# marker landed in the rendered PDF (flows with variable content, e.g.
+		# a Sales Invoice's line items). Falls back to the Signature Template's
+		# fixed coordinates when no anchor is present.
+		anchor = locate_signature_anchor(pdf_bytes)
+		if anchor:
+			page_number = anchor["page"]
 			box = (
-				sig_field_row.x,
-				sig_field_row.y,
-				sig_field_row.x + (sig_field_row.width or 200),
-				sig_field_row.y + (sig_field_row.height or 80),
+				anchor["x"],
+				anchor["top"] - anchor["height"],
+				anchor["x"] + anchor["width"],
+				anchor["top"],
 			)
+		else:
+			sig_field_row = None
+			if sig_template.fields:
+				sig_field_row = sig_template.fields[0]
+
+			page_number = (sig_field_row.page_number - 1) if sig_field_row else 0
+			box = None
+			if sig_field_row and sig_field_row.x and sig_field_row.y:
+				box = (
+					sig_field_row.x,
+					sig_field_row.y,
+					sig_field_row.x + (sig_field_row.width or 200),
+					sig_field_row.y + (sig_field_row.height or 80),
+				)
 
 	settings = frappe.get_single("DSC Settings")
 	hash_algorithm = settings.default_hash_algorithm or "sha256"
