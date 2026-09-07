@@ -38,6 +38,17 @@
 	// DocType, so we don't need a per-DocType filter here.
 	$(document).on("form-refresh", function (_e, frm) {
 		if (!frm || frm.is_new() || !frm.doc || !frm.doc.name) return;
+		// Detect a fresh submit HERE, before refreshDscStatus's "Not Applicable"
+		// early-return. While the doc is a draft the rule hasn't created a
+		// signing request yet, so the status call returns early — if we tracked
+		// docstatus inside that flow we'd never see the draft state and could
+		// never detect the draft -> submitted transition.
+		const prev = frm.__dsc_last_docstatus;
+		const cur = frm.doc.docstatus;
+		frm.__dsc_last_docstatus = cur;
+		if (prev !== undefined && prev < 1 && cur === 1) {
+			frm.__dsc_just_submitted = true;
+		}
 		refreshDscStatus(frm);
 	});
 
@@ -65,16 +76,14 @@
 	// merely opening an already-submitted, still-unsigned document — so viewing
 	// a document is never interrupted by a PIN prompt.
 	function maybeAutoPromptSign(frm, info) {
-		const prev = frm.__dsc_last_docstatus;
-		const cur = frm.doc.docstatus;
-		frm.__dsc_last_docstatus = cur;
-
 		if (frm.__dsc_auto_prompted) return;
 		if (!info.can_sign) return;
-		// Only on a fresh draft -> submitted transition observed in this session.
-		if (!(prev !== undefined && prev < 1 && cur === 1)) return;
+		// Only right after a live submit in this session (flag set by the
+		// form-refresh handler above), never on merely opening a submitted doc.
+		if (!frm.__dsc_just_submitted) return;
 
 		frm.__dsc_auto_prompted = true;
+		frm.__dsc_just_submitted = false;
 		// Let the submit's own UI (save indicator, reload) settle first.
 		setTimeout(() => startSigningFlow(frm, info), 600);
 	}
