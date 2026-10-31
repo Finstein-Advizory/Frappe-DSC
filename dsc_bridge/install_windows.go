@@ -64,6 +64,25 @@ func PostInstall() error {
 		return fmt.Errorf("autostart: %w", err)
 	}
 
+	// Additive hardening — the HKLM\Run entry above is still the guaranteed
+	// autostart; both steps below are best-effort and never block the install,
+	// so an older machine (no PowerShell/Defender) behaves exactly as before.
+	//
+	//  1. Self-healing watchdog: HKLM\Run only launches the bridge once, at
+	//     login, with no restart if it later dies (crash, forced close, or an
+	//     antivirus kill). The watchdog task re-checks every 5 minutes and
+	//     relaunches the bridge only when it is NOT already running — so it can
+	//     never spawn a duplicate or fight over port 4645.
+	//  2. Defender exclusion: the exe is unsigned, so a routine AV scan can
+	//     quarantine it and leave HKLM\Run pointing at a deleted file — the most
+	//     common reason the bridge "vanishes" and users are told to reinstall.
+	if err := installWatchdog(exe); err != nil {
+		log.Printf("watchdog: %v (continuing; bridge still auto-starts at login via Run)", err)
+	}
+	if err := addDefenderExclusion(filepath.Dir(exe)); err != nil {
+		log.Printf("defender-exclusion: %v (continuing; add it manually if AV quarantines the bridge)", err)
+	}
+
 	log.Println("post-install: complete")
 	return nil
 }
@@ -77,11 +96,17 @@ func PreUninstall() error {
 	if err := removeFirewallRule(); err != nil {
 		log.Printf("firewall-remove: %v", err)
 	}
+	if err := removeWatchdog(); err != nil {
+		log.Printf("watchdog-remove: %v", err)
+	}
 
 	cfg, err := LoadConfig()
 	if err == nil {
 		if err := removeCertFromTrustStore(cfg.TLSCertPath); err != nil {
 			log.Printf("cert-remove: %v", err)
+		}
+		if err := removeDefenderExclusion(cfg.DataDir); err != nil {
+			log.Printf("defender-exclusion-remove: %v", err)
 		}
 	}
 
@@ -171,6 +196,90 @@ func exeFullPath() (string, error) {
 		return "", err
 	}
 	return filepath.Clean(exe), nil
+}
+
+const watchdogTaskName = "DSC Bridge Watchdog"
+
+// psSingleQuote escapes a value for safe use inside a PowerShell single-quoted
+// literal (the only metacharacter there is the single quote itself, doubled).
+func psSingleQuote(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+// installWatchdog registers a self-healing Scheduled Task that relaunches the
+// bridge whenever it isn't running. It is purely additive to the HKLM\Run
+// autostart: Run still starts the bridge at login; this is the safety net that
+// recovers from a crash, a forced close, or an antivirus kill mid-session.
+//
+// The task's action checks for a running dsc-bridge before starting one, so it
+// can never create a second instance (and therefore never collide on port
+// 4645). The checking process exits immediately, so the task itself is never
+// long-running — no execution-time-limit or duplicate-instance concerns.
+//
+// Everything is driven from two .ps1 files written next to the exe and run with
+// -File, so there is no fragile command-line quoting to get wrong.
+func installWatchdog(exePath string) error {
+	dir := filepath.Dir(exePath)
+	watchdogPath := filepath.Join(dir, "dsc-bridge-watchdog.ps1")
+	setupPath := filepath.Join(dir, "dsc-bridge-install-watchdog.ps1")
+
+	// Recurring check: start the bridge only if it is not already running.
+	watchdog := "if (-not (Get-Process -Name dsc-bridge -ErrorAction SilentlyContinue)) " +
+		"{ Start-Process -FilePath '" + psSingleQuote(exePath) + "' -WindowStyle Hidden }\r\n"
+	if err := os.WriteFile(watchdogPath, []byte(watchdog), 0644); err != nil {
+		return fmt.Errorf("write watchdog script: %w", err)
+	}
+
+	// One-time registration. Runs under the interactive user so Start-Process
+	// lands the systray UI in their session; LeastPrivilege (no admin needed to
+	// run); fires 5 min after logon and repeats every 5 min indefinitely.
+	setup := "$ErrorActionPreference = 'Stop'\r\n" +
+		"$wd = '" + psSingleQuote(watchdogPath) + "'\r\n" +
+		"$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument \"-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `\"$wd`\"\"\r\n" +
+		"$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)\r\n" +
+		"$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew\r\n" +
+		"$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited\r\n" +
+		"Register-ScheduledTask -TaskName '" + watchdogTaskName + "' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null\r\n"
+	if err := os.WriteFile(setupPath, []byte(setup), 0644); err != nil {
+		return fmt.Errorf("write watchdog setup script: %w", err)
+	}
+
+	out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", setupPath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("register watchdog task: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// removeWatchdog deletes the watchdog Scheduled Task. Best-effort.
+func removeWatchdog() error {
+	out, err := exec.Command("schtasks", "/delete", "/tn", watchdogTaskName, "/f").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("delete watchdog task: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// addDefenderExclusion tells Windows Defender to stop scanning the bridge's
+// folder, so it stops quarantining the (unsigned) exe. Needs admin, which
+// install.bat already holds; a no-op when Defender is absent or managed by GPO.
+func addDefenderExclusion(dir string) error {
+	cmd := "Add-MpPreference -ExclusionPath '" + psSingleQuote(dir) + "'"
+	out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("add defender exclusion: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// removeDefenderExclusion reverses addDefenderExclusion. Best-effort.
+func removeDefenderExclusion(dir string) error {
+	cmd := "Remove-MpPreference -ExclusionPath '" + psSingleQuote(dir) + "'"
+	out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("remove defender exclusion: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // EnsureUserTrust is a no-op on Windows: the cert is added to the machine
