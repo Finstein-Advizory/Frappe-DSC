@@ -64,6 +64,17 @@ func PostInstall() error {
 		return fmt.Errorf("autostart: %w", err)
 	}
 
+	// Primary, most-reliable per-user autostart: a shortcut in the user's
+	// Startup folder. On real machines the HKLM\Run entry above does not always
+	// fire at login (group policy, a cleaned Run key, a roaming/managed
+	// profile), which is why users still found the bridge "not running" after a
+	// reboot even with Run set. The Startup folder is the mechanism Windows
+	// documents for per-user login apps and fires at every interactive logon.
+	// Best-effort: Run stays as the fallback, so this never blocks the install.
+	if err := installStartupShortcut(exe); err != nil {
+		log.Printf("startup-shortcut: %v (continuing; HKLM\\Run is the fallback autostart)", err)
+	}
+
 	// Additive hardening — the HKLM\Run entry above is still the guaranteed
 	// autostart; both steps below are best-effort and never block the install,
 	// so an older machine (no PowerShell/Defender) behaves exactly as before.
@@ -92,6 +103,9 @@ func PostInstall() error {
 func PreUninstall() error {
 	if err := removeAutoStartEntry(); err != nil {
 		log.Printf("autostart-remove: %v", err)
+	}
+	if err := removeStartupShortcut(); err != nil {
+		log.Printf("startup-shortcut-remove: %v", err)
 	}
 	if err := removeFirewallRule(); err != nil {
 		log.Printf("firewall-remove: %v", err)
@@ -196,6 +210,58 @@ func exeFullPath() (string, error) {
 		return "", err
 	}
 	return filepath.Clean(exe), nil
+}
+
+const startupShortcutName = "DSC Bridge.lnk"
+
+// startupShortcutPath returns the bridge's shortcut path in the current user's
+// Startup folder. An empty APPDATA (should not happen for an interactive user)
+// is an error so the caller logs it and falls back to HKLM\Run.
+func startupShortcutPath() (string, error) {
+	appData := os.Getenv("APPDATA")
+	if appData == "" {
+		return "", fmt.Errorf("APPDATA not set")
+	}
+	return filepath.Join(appData, "Microsoft", "Windows", "Start Menu",
+		"Programs", "Startup", startupShortcutName), nil
+}
+
+// installStartupShortcut creates a .lnk in the user's Startup folder that
+// launches the bridge (hidden window) at every interactive logon. It uses the
+// built-in WScript.Shell COM object via PowerShell, so no extra Go dependency
+// is needed, and needs no admin (the shortcut lives in the user's own profile).
+func installStartupShortcut(exePath string) error {
+	lnk, err := startupShortcutPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(lnk), 0755); err != nil {
+		return fmt.Errorf("create startup dir: %w", err)
+	}
+	// Single-line statements separated by ';' — the most compatible form for
+	// powershell -Command. WindowStyle 7 = minimized/hidden.
+	ps := "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('" + psSingleQuote(lnk) + "'); " +
+		"$s.TargetPath='" + psSingleQuote(exePath) + "'; " +
+		"$s.WorkingDirectory='" + psSingleQuote(filepath.Dir(exePath)) + "'; " +
+		"$s.WindowStyle=7; $s.Description='DSC Bridge'; $s.Save()"
+	out, err := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("create startup shortcut: %w (output: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// removeStartupShortcut deletes the Startup-folder shortcut. Best-effort; a
+// missing file is not an error.
+func removeStartupShortcut() error {
+	lnk, err := startupShortcutPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(lnk); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove startup shortcut: %w", err)
+	}
+	return nil
 }
 
 const watchdogTaskName = "DSC Bridge Watchdog"
